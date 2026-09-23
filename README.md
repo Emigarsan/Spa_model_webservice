@@ -1,65 +1,101 @@
+[![English](https://img.shields.io/badge/lang-English-4c1?style=flat-square)](./README.md)
+[![Español](https://img.shields.io/badge/lang-Espa%C3%B1ol-lightgrey?style=flat-square)](./README.es.md)
+
 # SPA Occupancy
 
-Documentación del frontend y el backend de la app de predicción de ocupación del spa, pensado para desplegarse en Render como dos servicios independientes a partir de este mismo repositorio (`render.yaml` en la raíz).
+![Python](https://img.shields.io/badge/Python-3.13-3776AB?style=flat-square&logo=python&logoColor=white)
+![Flask](https://img.shields.io/badge/Flask-3.1-000000?style=flat-square&logo=flask&logoColor=white)
+![gunicorn](https://img.shields.io/badge/gunicorn-26.2-499848?style=flat-square&logo=gunicorn&logoColor=white)
+![scikit-learn](https://img.shields.io/badge/scikit--learn-1.8-F7931E?style=flat-square&logo=scikitlearn&logoColor=white)
+![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-5.4-646CFF?style=flat-square&logo=vite&logoColor=white)
+![Render](https://img.shields.io/badge/Deployed%20on-Render-46E3B7?style=flat-square&logo=render&logoColor=white)
 
-## Organización del repositorio
+Backend and frontend for a spa occupancy prediction app, meant to be deployed on Render as two independent services from this same repository (`render.yaml` at the root).
+
+## Architecture
+
+```mermaid
+flowchart LR
+    User(("User / Browser"))
+
+    subgraph Render["Render (Blueprint)"]
+        direction LR
+        Frontend["Frontend<br/>React + TS + Vite<br/>(Static Site)"]
+        Backend["Backend API<br/>Flask + gunicorn<br/>(Web Service)"]
+        Models[("Model artifacts (.joblib)<br/>original + retrained")]
+        Backend -->|"loads for /predict"| Models
+        Backend -->|"POST /retrain writes"| Models
+    end
+
+    User -->|HTTP| Frontend
+    Frontend -->|"/api/* (proxied)"| Backend
+    Backend -->|JSON| Frontend
+```
+
+Model artifacts live on Render's free-tier ephemeral disk — a retrained model is lost on restart/sleep and the service falls back to the version-controlled artifact. See [Deployment on Render](#deployment-on-render) for details.
+
+## Repository layout
 
 ```
 .
-├── backend/            API REST (Flask) que sirve y reentrena el modelo de predicción
-│   ├── app/               Lógica de dominio del modelo, sin Flask
-│   │   └── utils/             Ingeniería de características para entrenamiento y predicción
-│   ├── tests/              Tests de predicción y de reentrenamiento
-│   ├── data/               CSV de ocupación usado para entrenar
-│   └── models/             Artefactos del modelo serializados (.joblib)
-├── frontend/           React + Vite + TypeScript que consume la API
-│   ├── src/                Código fuente de la app
-│   │   └── api/                Cliente de la API y datos simulados (mock)
-│   └── public/             Archivos estáticos servidos tal cual (CSV de ejemplo, etc.)
-├── utils/              Utilidades/scripts auxiliares a nivel de todo el repositorio
-├── render.yaml         Blueprint de Render que define ambos servicios
+├── backend/            REST API (Flask) that serves and retrains the prediction model
+│   ├── app/               Model domain logic, framework-free
+│   │   └── utils/             Feature engineering for training and prediction
+│   ├── tests/              Prediction and retraining tests
+│   ├── data/               Occupancy CSV used for training
+│   └── models/             Serialized model artifacts (.joblib)
+├── frontend/           React + Vite + TypeScript app that consumes the API
+│   ├── src/                App source code
+│   │   └── api/                API client and mock data
+│   └── public/             Static files served as-is (sample CSV, etc.)
+├── Endpoints.md        Full endpoint reference (every route, JSON examples, error codes)
+├── render.yaml         Render Blueprint defining both services
 ├── .gitignore
 └── README.md
 ```
 
-* **`backend/main.py`**: el enrutado está concentrado aquí a propósito — todas las rutas, la validación de la forma de la petición y los `errorhandler`. El resto de módulos son dependencias sin Flask, así que se pueden probar y reutilizar sin levantar la app, y solo hay un sitio donde mirar para saber qué expone la API.
-* **`backend/app/model_service.py`**: carga cacheada del artefacto del modelo y lógica de predicción (individual y por rangos), sin depender de Flask.
-* **`backend/app/train_model.py`**: reentrenamiento, validación de datasets y lectura del histórico.
-* **`backend/app/retrain.py`**: ingesta del CSV que llega por `POST /retrain`.
-* **`backend/app/utils/`**: ingeniería de características, compartida entre entrenamiento y predicción.
-* **`backend/app/README_reentrenamiento.md`**: detalle completo del lane de reentrenamiento (resumido más abajo).
-* **`backend/data/`**: CSV de ocupación (`fecha_cita`, `tramo`, `n_citas`). No se mueve dentro de `app/` porque es un recurso, no código.
-* **`backend/models/`**: artefactos serializados, hermanos de `main.py` por el mismo motivo que `data/`:
-  * `modelo_ocupacion.joblib` — de fábrica, versionado en git, **nunca se escribe**.
-  * `scaler.joblib` — de fábrica, versionado.
-  * `modelo_reentrenado.joblib` — lo publica `POST /retrain`, ignorado por git.
-  * `backup/` — copias del `modelo_reentrenado.joblib` anterior, guardadas justo antes de que un nuevo reentrenamiento lo sobrescriba. `POST /retrain/reset` también las borra al volver al estado de fábrica.
+* **`backend/main.py`**: routing is deliberately concentrated here — every route, request-shape validation and the `errorhandler`s. The rest of the modules are framework-free dependencies, so they can be tested and reused without spinning up the app, and there is only one place to look to know what the API exposes.
+* **`backend/app/model_service.py`**: cached loading of the model artifact and prediction logic (single-day and range), with no Flask dependency.
+* **`backend/app/train_model.py`**: retraining, dataset validation and reading the historical data.
+* **`backend/app/retrain.py`**: ingestion of the CSV received through `POST /retrain`.
+* **`backend/app/utils/`**: feature engineering, shared between training and prediction.
+* **`backend/app/README_reentrenamiento.md`**: full write-up of the retraining lane (summarized below).
+* **`backend/data/`**: occupancy CSV (`fecha_cita`, `tramo`, `n_citas`). It doesn't live inside `app/` because it's a resource, not code.
+* **`backend/models/`**: serialized artifacts, siblings of `main.py` for the same reason as `data/`:
+  * `modelo_ocupacion.joblib` — factory model, version-controlled, **never overwritten**.
+  * `scaler.joblib` — factory scaler, version-controlled.
+  * `modelo_reentrenado.joblib` — published by `POST /retrain`, git-ignored.
+  * `backup/` — copies of the previous `modelo_reentrenado.joblib`, saved right before a new retrain overwrites it. `POST /retrain/reset` also clears these when it returns to the factory state.
 
-  Si existe `modelo_reentrenado.joblib`, es el que se usa; si no, se cae al de fábrica. El artefacto versionado es de solo lectura, así que volver al original nunca depende de que una copia de seguridad esté intacta: basta con borrarlo, que es justo lo que hace `POST /retrain/reset`.
-* **`backend/tests/`**: tests de la lógica de predicción y del flujo de reentrenamiento.
-* **`frontend/src/types.ts`**: tipos que modelan el contrato de API en el frontend.
-* **`frontend/src/api/mock.ts`**: datos simulados que usa la app cuando `VITE_USE_MOCK=true`.
-* **`utils/`** (raíz del repo): utilidades o scripts auxiliares a nivel de todo el proyecto — no confundir con `backend/app/utils/`, que es específico de la ingeniería de características del modelo.
+  If `modelo_reentrenado.joblib` exists, it's the one that gets used; otherwise it falls back to the factory model. The version-controlled artifact is read-only, so returning to the original never depends on a backup being intact: deleting the retrained file is enough, which is exactly what `POST /retrain/reset` does.
+* **`backend/tests/`**: tests for the prediction logic and the retraining flow.
+* **`frontend/src/types.ts`**: types that model the API contract on the frontend.
+* **`frontend/src/api/mock.ts`**: mock data the app uses when `VITE_USE_MOCK=true`.
+* **[`Endpoints.md`](./Endpoints.md)**: full API reference (every route, JSON examples, the complete error-code table) — a more exhaustive companion to the [API contract](#api-contract-backend) section below.
 
-## Cómo se acoplan
+## How it fits together
 
-* El frontend llama siempre a rutas relativas `/api/*`, nunca a la URL del backend. En desarrollo lo resuelve el proxy de `frontend/vite.config.ts` y en producción la regla de reescritura del static site (`render.yaml`).
-* `frontend/src/api/client.ts` llama a `/predict/single` y `/predict/range` como `GET`, con los parámetros por query string (sin cuerpo), en línea con el contrato del backend.
-* Como el navegador ve un único origen, no hace falta CORS ni recompilar el frontend si cambia la URL del backend.
-* Cada carpeta es un servicio de Render con su propio `rootDir`, así que el build y las dependencias de uno no afectan al otro.
-* Los tramos viajan siempre sin ñ (`manana` / `tarde`) en el contrato de API; la ñ es un detalle interno del modelo y del dataset. En la entrada se aceptan ambas formas.
+* The frontend always calls relative `/api/*` routes, never the backend URL directly. In development this is resolved by the proxy in `frontend/vite.config.ts`, and in production by the static site's rewrite rule (`render.yaml`).
+* `frontend/src/api/client.ts` calls `/predict/single` and `/predict/range` as `GET`, with parameters in the query string (no body), matching the backend contract.
+* Since the browser only ever sees a single origin, there's no need for CORS or for rebuilding the frontend when the backend URL changes.
+* Each folder is its own Render service with its own `rootDir`, so one service's build and dependencies never affect the other.
+* Time slots always travel without the Spanish `ñ` (`manana` / `tarde`) in the API contract; the `ñ` is an internal detail of the model and the dataset. Both spellings are accepted as input.
 
 ## Frontend
 
-Páginas:
+Pages:
 
-* **Inicio (`/`)**: explicación de la app y accesos a Predicción y Reentrenar.
-* **Predicción (`/predict`)**:
-  * Fecha única: fecha + tramo (mañana/tarde) → tabla con las citas previstas.
-  * Rango de fechas: dos gráficos de barras apiladas (mañana + tarde) lado a lado — ocupación prevista del periodo elegido y ocupación real del mismo periodo del año anterior (si hay datos históricos).
-* **Reentrenar (`/retrain`)**: descarga de un CSV de ejemplo, y envío de nuevos datos (texto pegado o archivo) validados contra ese mismo formato antes de enviarlos al backend.
+* **Home (`/`)**: explains the app and links to Predict and Retrain.
+* **Predict (`/predict`)**:
+  * Single date: date + time slot (morning/afternoon) → table with the predicted appointments.
+  * Date range: two stacked bar charts (morning + afternoon) side by side — predicted occupancy for the chosen period and the actual occupancy for the same period the previous year (if historical data is available).
+* **Retrain (`/retrain`)**: download a sample CSV, and submit new data (pasted text or a file) validated against that same format before sending it to the backend.
 
-**Formato de datos para reentrenar**, CSV con cabecera exacta `fecha_cita,tramo,n_citas`:
+More detail — including the app layout, navigation and the floating status widget — lives in [`frontend/README.md`](./frontend/README.md).
+
+**Data format for retraining**, CSV with the exact header `fecha_cita,tramo,n_citas`:
 
 ```
 fecha_cita,tramo,n_citas
@@ -68,144 +104,157 @@ fecha_cita,tramo,n_citas
 ```
 
 * `fecha_cita`: `YYYY-MM-DD`
-* `tramo`: `manana` o `tarde` (también se acepta `mañana`)
-* `n_citas`: entero ≥ 0 (número de citas reales de ese tramo)
+* `tramo`: `manana` or `tarde` (`mañana` is also accepted)
+* `n_citas`: integer ≥ 0 (actual number of appointments for that slot)
 
-Es el mismo formato que consume el backend, así que el fichero se valida en el navegador antes de enviarlo. El archivo de ejemplo se sirve desde `public/ejemplo_retrain.csv` y es descargable desde la página de Reentrenar.
+This is the same format the backend consumes, so the file is validated in the browser before it's sent. The sample file is served from `public/ejemplo_retrain.csv` and can be downloaded from the Retrain page.
 
-## Contrato de API (backend)
+## API contract (backend)
 
-`backend/main.py` expone estos endpoints. Los tramos viajan siempre sin ñ (`manana`/`tarde`); en la entrada se aceptan ambas formas. La API acepta indistintamente las rutas con o sin barra final (`strict_slashes = False`), para tolerar tanto una URL escrita a mano como la que genere un script de evaluación.
+This mirrors the canonical contract documented in [`backend/README.md`](./backend/README.md); see also [`Endpoints.md`](./Endpoints.md) for the exhaustive reference.
+
+`backend/main.py` exposes these endpoints. Time slots always travel without the `ñ` (`manana`/`tarde`); both spellings are accepted as input. The API accepts routes with or without a trailing slash indistinctly (`strict_slashes = False`), to tolerate both a hand-typed URL and whatever an evaluation script generates.
 
 ### `GET /`
-Landing: descripción de la API y lista de endpoints.
+Landing: API description and list of endpoints.
 
 ### `GET /health`
-Liveness check. Siempre devuelve 200, incluso sin modelo cargado — es un liveness check, y devolver error solo haría que Render reiniciase el servicio en bucle.
+Liveness check. Always returns 200, even without a loaded model — it's a liveness check, and returning an error would only make Render restart the service in a loop.
 
 ```json
 {"status": "ok", "model_loaded": true, "entrenado_hasta": "2026-01-24",
  "version_modelo": "original", "es_original": true}
 ```
-`es_original` es `false` cuando está activo un modelo reentrenado. El frontend lo usa para ofrecer el botón de restaurar en el widget flotante de estado.
+`es_original` is `false` when a retrained model is active. The frontend uses it to offer the restore button in the floating status widget.
 
 ### `GET /predict` (alias `GET /predict/single`)
 ```
-// entrada (query string)
+// input (query string)
 ?date=2026-09-10&tramo=manana
-// salida
+// output
 {"date": "2026-09-10", "tramo": "manana", "citasPrevistas": 2.7,
  "es_cierre": false, "version_modelo": "original", "entrenado_hasta": "2026-01-24"}
 ```
-* Parámetros por query string, no por body: `date` (también acepta `fecha`) y `tramo`.
-* Los días de cierre (25/12, 1/1, 6/1) devuelven `citasPrevistas: 0` sin consultar al modelo (`es_cierre: true`).
-* `version_modelo` y `entrenado_hasta` no los usa el frontend, pero dejan explícito que la cifra viene de una predicción real del modelo vigente.
-* Solo `GET`, sin `POST`: es una consulta de solo lectura, así que es el único verbo con sentido, y es también lo que exige el criterio de evaluación — sirve tanto `requests.get(url, params={...})` como pegar la URL directamente en el navegador.
+* Parameters in the query string, not the body: `date` (also accepts `fecha`) and `tramo`.
+* Closed days (Dec 25th, Jan 1st, Jan 6th) return `citasPrevistas: 0` without querying the model (`es_cierre: true`).
+* `version_modelo` and `entrenado_hasta` aren't used by the frontend, but they make explicit that the figure comes from a real prediction of the currently active model.
+* `GET` only, no `POST`: it's a read-only query, so `GET` is the only verb that makes sense, and it's also what the evaluation criteria require — it works both with `requests.get(url, params={...})` and by pasting the URL directly into a browser.
 
 ### `GET /predict/range`
 ```
-// entrada (query string)
+// input (query string)
 ?startDate=2026-09-08&endDate=2026-09-14
-// salida
+// output
 {
   "current":      [{"date": "2026-09-08", "manana": 2.7, "tarde": 3.6}, ...],
   "previousYear": [{"date": "2025-09-08", "manana": 3.0, "tarde": 5.0}, ...]
 }
 ```
-* `current` son predicciones; `previousYear` es la ocupación real del mismo periodo un año antes, leída del histórico de `data/`.
-* `previousYear` es `null` si no hay histórico de ese periodo. Si solo hay parte, se devuelven únicamente los días que existen: no se rellena con ceros porque `n_citas = 0` es un valor observado de verdad y el gráfico mentiría.
-* El rango no puede superar 366 días.
+* `current` holds predictions; `previousYear` is the actual occupancy for the same period one year before, read from the historical data in `data/`.
+* `previousYear` is `null` if there's no historical data for that period. If only part of it exists, only the days that actually exist are returned: it's never padded with zeros, because `n_citas = 0` is a genuinely observed value and padding would make the chart lie.
+* The range can't exceed 366 days.
 
 ### `GET /retrain`
-Estado del modelo desplegado, datasets detectados e instrucciones de uso.
+Status of the deployed model, detected datasets and usage instructions.
 
 ### `POST /retrain`
-Acepta el CSV de dos formas: como archivo en el campo `file` (`multipart/form-data`) o como JSON `{"csvText": "<contenido>"}`.
+Accepts the CSV in two ways: as a file in the `file` field (`multipart/form-data`) or as JSON `{"csvText": "<content>"}`.
 
 ```json
-// 200 — el modelo se ha reemplazado
+// 200 — the model has been replaced
 {"status": "ok",    "rowsIngested": 14, "message": "Se han incorporado 14 filas y el modelo..."}
-// 200 — el candidato no ha superado la validación; el modelo anterior sigue vigente
+// 200 — the candidate didn't pass validation; the previous model stays active
 {"status": "error", "rowsIngested": 14, "message": "Se han recibido 14 filas, pero el modelo NO..."}
 ```
-Un candidato descartado responde 200 y no un error de HTTP a propósito: el CSV se ha procesado correctamente, y así el frontend puede mostrar cuántas filas ha leído y por qué no se ha publicado el modelo.
+A rejected candidate deliberately responds with 200 rather than an HTTP error: the CSV was processed correctly, so the frontend can show how many rows it read and why the model wasn't published.
 
 ### `POST /retrain/reset`
-Vuelve al estado de fábrica: borra `modelo_reentrenado.joblib`, los CSV subidos (`data/subida_*.csv`) y las copias de seguridad. Es idempotente.
+Returns to the factory state: deletes `modelo_reentrenado.joblib`, the uploaded CSVs (`data/subida_*.csv`) and the backups. Idempotent.
 
 ```json
 {"status": "ok", "modelRestored": true, "filesRemoved": 1, "message": "..."}
 ```
-Exige `X-Retrain-Token` en las mismas condiciones que `POST /retrain`.
+Requires `X-Retrain-Token` under the same conditions as `POST /retrain`.
 
-### Errores
-Todos los errores salen en JSON como `{"error": "..."}`:
+### Errors
+All errors come back as JSON, shaped as `{"error": "..."}`:
 
-| Código | Cuándo |
+| Code | When |
 |---|---|
-| 400 | Datos mal formados: fecha, tramo, rango invertido, CSV inválido, sin días nuevos. |
-| 401 | Falta `X-Retrain-Token` y el servidor tiene `RETRAIN_TOKEN` configurado. |
-| 405 | Método no permitido — `/predict` y `/predict/range` son solo `GET`. |
-| 409 | Ya hay un reentrenamiento en curso. |
-| 413 | El CSV supera 2 MB. |
-| 503 | El artefacto del modelo no está disponible. |
+| 400 | Malformed data: date, time slot, inverted range, invalid CSV, no new rows. |
+| 401 | Missing `X-Retrain-Token` while the server has `RETRAIN_TOKEN` configured. |
+| 405 | Method not allowed — `/predict` and `/predict/range` are `GET`-only. |
+| 409 | A retrain is already in progress. |
+| 413 | The CSV is larger than 2 MB. |
+| 503 | The model artifact isn't available. |
 
-### Reentrenamiento
+### Retraining
 
-El CSV recibido se suma al histórico, no lo reemplaza: se guarda en `data/` con un nombre (`subida_<sello>.csv`) que ordena después del dataset base, de modo que en caso de solapamiento gane el dato más reciente.
+The received CSV is added to the history, not swapped in as a replacement: it's saved under `data/` with a name (`subida_<timestamp>.csv`) that sorts after the base dataset, so that on overlap the most recent data wins.
 
-Después se reentrena con todo lo que haya en `data/` y el modelo nuevo se publica si no empeora claramente al vigente en un holdout temporal: el umbral es el MAE del modelo actual en esa misma ventana, con un 10% de margen (`MARGEN_TOLERANCIA_MAE`) — no una comparación contra un baseline ingenuo ni un techo fijo, que rechazaban reentrenamientos con datos reales válidos solo porque, por casualidad, la ventana concreta favorecía a esa referencia. Ese techo fijo (`MAE_MAXIMO_ACEPTABLE`) solo se usa en el primer entrenamiento, cuando no hay modelo anterior con el que comparar.
+The model is then retrained on everything under `data/`, and the new model is published only if it doesn't clearly perform worse than the current one on a temporal holdout: the threshold is the current model's MAE on that same window, with a 10% margin (`MARGEN_TOLERANCIA_MAE`) — not a comparison against a naive baseline or a fixed ceiling, which used to reject valid retrains with real data just because, by chance, that particular window favored the reference. That fixed ceiling (`MAE_MAXIMO_ACEPTABLE`) is only used for the very first training, when there's no previous model to compare against.
 
-El CSV se conserva aunque el modelo no se publique. Son datos reales: que el candidato no bata al vigente en esta validación concreta no los invalida como observaciones. Solo se retira si ni siquiera se ha podido evaluar (p. ej. no aporta ninguna fila nueva sobre lo que ya había).
+The CSV is kept even if the model isn't published. It's real data: a candidate not beating the current model in this particular validation doesn't invalidate it as an observation. It's only discarded if it couldn't even be evaluated (e.g. it doesn't add any row that wasn't already there).
 
-Solo se exige que haya filas nuevas de verdad (más que las que había cuando se entrenó el modelo vigente). Sin eso, se rechaza: sería reentrenar y republicar sin ninguna información nueva. Con eso claro, hay dos formas válidas de aportar filas nuevas, y la ventana de validación se adapta a cuál sea:
+The only requirement is that there are genuinely new rows (more than there were when the current model was trained). Without that, the upload is rejected: retraining and republishing without any new information would be pointless. Given that, there are two valid ways to contribute new rows, and the validation window adapts to which one it is:
 
-1. **Extender el horizonte** (subir una semana nueva, por ejemplo): la ventana de validación (60 días por defecto) se acorta —nunca se alarga— a los días que de verdad son posteriores al `entrenado_hasta` vigente. Sin este ajuste, subir datos semana a semana nunca pasaría de la primera vez: el corte (fecha máxima menos 60 días) caería antes del entrenamiento vigente aunque la semana subida fuera genuinamente nueva.
-2. **Rellenar un hueco histórico** (fechas anteriores a la máxima ya registrada): como no hay días nuevos al final que aislar como hold-out, se usa la ventana de validación completa sobre el tramo final ya conocido, comparando si incorporar esas filas mejora o empeora el modelo ahí.
+1. **Extending the horizon** (uploading a new week, for example): the validation window (60 days by default) is shortened — never lengthened — to the days that are genuinely later than the current `entrenado_hasta`. Without this adjustment, uploading data week by week would never get past the first time: the cutoff (max date minus 60 days) would fall before the currently trained date even though the uploaded week was genuinely new.
+2. **Filling a historical gap** (dates earlier than the latest one already recorded): since there are no new days at the end to isolate as a hold-out, the full validation window is used over the already-known final stretch, comparing whether adding those rows improves or worsens the model there.
 
-En ambos casos el modelo solo se publica si de verdad mejora; rellenar un hueco no está garantizado que lo haga (si el hueco es pequeño frente al histórico total, es normal que apenas mueva el MAE de validación).
+In both cases the model is only published if it genuinely improves; filling a gap isn't guaranteed to do so (if the gap is small relative to the total history, it's normal for it to barely move the validation MAE).
 
-Publicar significa escribir `modelo_reentrenado.joblib`; el artefacto de fábrica no se toca nunca, así que `POST /retrain/reset` deshace cualquier reentrenamiento sin necesidad de restaurar copias.
+Publishing means writing `modelo_reentrenado.joblib`; the factory artifact is never touched, so `POST /retrain/reset` undoes any retrain without needing to restore backups.
 
-El artefacto vigente se cachea en memoria y se recarga solo cuando el fichero cambia, así que un reentrenamiento surte efecto sin reiniciar el servicio.
+The active artifact is cached in memory and only reloaded when the file changes, so a retrain takes effect without restarting the service.
 
-Detalles del lane de reentrenamiento en `backend/app/README_reentrenamiento.md`.
+Retraining-lane details live in `backend/app/README_reentrenamiento.md`.
 
-## Desarrollo local
+## Local development
 
-Dos terminales:
+Two terminals:
 
 ```bash
 cd backend && pip install -r requirements.txt && python main.py   # :5000
 cd frontend && npm install && npm run dev                         # :5173
 ```
 
-Para trabajar en el front sin backend, copia `frontend/.env.example` a `frontend/.env` y pon `VITE_USE_MOCK=true` (la app usa entonces datos simulados de `src/api/mock.ts`).
+To work on the frontend without the backend running, copy `frontend/.env.example` to `frontend/.env` and set `VITE_USE_MOCK=true` (the app then uses mock data from `src/api/mock.ts`).
 
-Para correr los tests del backend:
+To run the backend tests:
 ```bash
 cd backend && python -B -m unittest discover -s tests -v
 ```
 
-Build del frontend (genera el sitio estático en `frontend/dist/`):
+Frontend build (generates the static site into `frontend/dist/`):
 ```bash
 cd frontend && npm run build
 ```
 
-⚠️ `scikit-learn` está fijado a la versión con la que se serializaron los artefactos de `models/` (ver comentario en `backend/requirements.txt`).
+⚠️ `scikit-learn` is pinned to the version the artifacts in `models/` were serialized with (see the comment in `backend/requirements.txt`).
 
-## Despliegue en Render
+## Deployment on Render
 
-Este repo usa un [Blueprint](https://render.com/docs/blueprint-spec) — al conectar el repo en Render, `render.yaml` crea los dos servicios:
+This repo uses a [Blueprint](https://render.com/docs/blueprint-spec) — connecting the repo on Render, `render.yaml` creates both services:
 
-* **`spa-occupancy-backend`**: Web Service con `rootDir: backend`, arrancado con `gunicorn main:app` y con `/health` como health check.
-* **`spa-occupancy-frontend`**: Static Site con `rootDir: frontend` (`npm ci && npm run build`, publish path `./dist`), con dos reglas de reescritura en este orden: `/api/*` hacia el backend, y `/*` hacia `index.html` para el enrutado de React Router. Gracias a la primera regla, el navegador ve un único origen y no hace falta CORS ni hornear la URL del backend en el build.
+* **`spa-occupancy-backend`**: Web Service with `rootDir: backend`, started with `gunicorn main:app` and `/health` as the health check.
+* **`spa-occupancy-frontend`**: Static Site with `rootDir: frontend` (`npm ci && npm run build`, publish path `./dist`), with two rewrite rules in this order: `/api/*` towards the backend, and `/*` towards `index.html` for React Router's routing. Thanks to the first rule, the browser only ever sees a single origin, so there's no need for CORS or for baking the backend URL into the build.
 
-⚠️ Tras el primer deploy hay que corregir en `render.yaml` el `destination` de la regla `/api/*` con la URL pública real que Render haya asignado al backend (añade un sufijo si el nombre ya estaba cogido) y volver a desplegar el static site. Después, comprobar que las peticiones atraviesan la reescritura (aquí con `/retrain`, que es estable; sirve cualquier endpoint):
+⚠️ After the first deploy, `render.yaml`'s `/api/*` rewrite `destination` needs to be corrected with the real public URL Render assigned to the backend (it adds a suffix if the name was already taken), then the static site redeployed. Afterwards, verify requests actually go through the rewrite (using `/retrain` here since it's stable; any endpoint works):
 
 ```bash
 curl -X POST https://<static-site>/api/retrain \
   -H 'Content-Type: application/json' -d '{"csvText":"fecha_cita,tramo,n_citas\n2026-07-01,manana,3"}'
 ```
 
-⚠️ En el plan gratuito de Render el disco es efímero: el modelo reentrenado y los CSV subidos se pierden cuando el servicio se reinicia o se duerme, y se vuelve al artefacto versionado en el repositorio.
+⚠️ On Render's free plan the disk is ephemeral: the retrained model and any uploaded CSVs are lost when the service restarts or goes to sleep, and it falls back to the artifact checked into the repository.
+
+## Contributors
+
+Built as a team project during a bootcamp:
+
+* Emilio Garrote — [@Emigarsan](https://github.com/Emigarsan)
+* [@sgusmar](https://github.com/sgusmar)
+* [@MCCFern](https://github.com/MCCFern)
+* [@lolarealcejudo27](https://github.com/lolarealcejudo27)
+
+This repository ([`Emigarsan/Spa_model_webservice`](https://github.com/Emigarsan/Spa_model_webservice)) is Emilio's personal copy of the original team project, kept as a portfolio piece.

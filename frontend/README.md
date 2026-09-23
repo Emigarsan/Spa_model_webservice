@@ -1,24 +1,44 @@
+[![English](https://img.shields.io/badge/lang-English-4c1?style=flat-square)](./README.md)
+[![Español](https://img.shields.io/badge/lang-Espa%C3%B1ol-lightgrey?style=flat-square)](./README.es.md)
+
 # SPA Occupancy — Frontend
 
-Frontend (React + Vite + TypeScript) para mostrar el modelo de Machine Learning
-de predicción de ocupación del spa. Pensado para desplegarse en Render como
-Static Site.
+![React](https://img.shields.io/badge/React-18.3-61DAFB?style=flat-square&logo=react&logoColor=black)
+![TypeScript](https://img.shields.io/badge/TypeScript-5.6-3178C6?style=flat-square&logo=typescript&logoColor=white)
+![Vite](https://img.shields.io/badge/Vite-5.4-646CFF?style=flat-square&logo=vite&logoColor=white)
+![Render](https://img.shields.io/badge/Deployed%20on-Render-46E3B7?style=flat-square&logo=render&logoColor=white)
 
-## Páginas
+Frontend (React + Vite + TypeScript) to showcase the spa occupancy prediction
+Machine Learning model. Meant to be deployed on Render as a Static Site.
 
-- **Inicio (`/`)**: explicación de la app y accesos a Predicción y Reentrenar.
-- **Predicción (`/predict`)**:
-  - *Fecha única*: fecha + tramo (mañana/tarde) → tabla con las citas previstas.
-  - *Rango de fechas*: dos gráficos de barras apiladas (mañana + tarde) lado a
-    lado — ocupación prevista del periodo elegido y ocupación real del mismo
-    periodo del año anterior (si hay datos históricos).
-- **Reentrenar (`/retrain`)**: descarga de un CSV de ejemplo, y envío de nuevos
-  datos (texto pegado o archivo) validados contra ese mismo formato antes de
-  enviarlos al backend.
+## Pages
 
-## Formato de datos para reentrenar
+- **Home (`/`)**: explains the app and links to Predict and Retrain.
+- **Predict (`/predict`)**:
+  - *Single date*: date + time slot (morning/afternoon) → table with the predicted appointments.
+  - *Date range*: two stacked bar charts (morning + afternoon) side by side —
+    predicted occupancy for the chosen period and the actual occupancy for
+    the same period the previous year (if historical data is available).
+- **Retrain (`/retrain`)**: download a sample CSV, and submit new data
+  (pasted text or a file) validated against that same format before sending
+  it to the backend.
 
-CSV con cabecera exacta `fecha_cita,tramo,n_citas`:
+## Layout & navigation
+
+Every page shares a common `Layout` (`src/components/Layout.tsx`) with a nav
+bar and a floating widget:
+
+- **Nav bar**: links to Home, Predict, Retrain, and an external link to the
+  backend's Swagger UI at `/api/docs`.
+- **`HealthWidget`**: a floating "status" button visible on every page. It
+  calls `GET /api/health` and shows the service status, whether the model is
+  loaded, its training date, and the active model version (factory vs.
+  retrained). It also includes a button to **restore the original model**
+  via `POST /api/retrain/reset`.
+
+## Data format for retraining
+
+CSV with the exact header `fecha_cita,tramo,n_citas`:
 
 ```csv
 fecha_cita,tramo,n_citas
@@ -27,29 +47,37 @@ fecha_cita,tramo,n_citas
 ```
 
 - `fecha_cita`: `YYYY-MM-DD`
-- `tramo`: `manana` o `tarde` (también se acepta `mañana`)
-- `n_citas`: entero >= 0 (número de citas reales de ese tramo)
+- `tramo`: `manana` or `tarde` (`mañana` is also accepted)
+- `n_citas`: integer >= 0 (actual number of appointments for that slot)
 
-Es el mismo formato que consume el backend, así que el fichero se valida en el
-navegador antes de enviarlo. El archivo de ejemplo se sirve desde
-`public/ejemplo_retrain.csv` y es descargable desde la página de Reentrenar.
+This is the same format the backend consumes, so the file is validated in the
+browser before it's sent. The sample file is served from
+`public/ejemplo_retrain.csv` and can be downloaded from the Retrain page.
 
-## Contrato de API
+## API contract
 
-Los endpoints (`/predict/single`, `/predict/range`, `/retrain`) están
-documentados en [../backend/README.md](../backend/README.md), que es la fuente
-de verdad del contrato. Los tipos que los modelan viven en `src/types.ts`.
+The endpoints (`/predict/single`, `/predict/range`, `/retrain`) are
+documented in [../backend/README.md](../backend/README.md), which is the
+source of truth for the contract. The types that model them live in
+`src/types.ts`.
 
-## Desarrollo local
+## Local development
 
 ```bash
 npm install
 npm run dev
 ```
 
-El frontend llama siempre a `/api/*`, y el proxy de `vite.config.ts` lo
-redirige al backend en `http://127.0.0.1:5000`. Para trabajar con la app
-completa, levanta el backend en otra terminal:
+| Script | Command | Description |
+|---|---|---|
+| `npm run dev` | `vite` | Dev server, with the `/api/*` proxy to `:5000` |
+| `npm run build` | `tsc --noEmit && vite build` | Type-check, then build to `dist/` |
+| `npm run preview` | `vite preview` | Serve the built `dist/` locally |
+| `npm run lint` | `tsc --noEmit` | Type-check only — no ESLint installed |
+
+The frontend always calls `/api/*`, and the proxy in `vite.config.ts`
+redirects it to the backend at `http://127.0.0.1:5000`. To work with the full
+app, start the backend in another terminal:
 
 ```bash
 cd ../backend
@@ -57,19 +85,20 @@ pip install -r requirements.txt
 python main.py
 ```
 
-Para trabajar en el frontend **sin backend levantado**, copia `.env.example` a
-`.env` y pon `VITE_USE_MOCK=true`: la app usa entonces datos simulados
+To work on the frontend **without the backend running**, copy `.env.example`
+to `.env` and set `VITE_USE_MOCK=true`: the app then uses mock data
 (`src/api/mock.ts`).
 
-## Build y despliegue en Render
+## Build & deployment on Render
 
 ```bash
 npm run build
 ```
 
-Genera el sitio estático en `dist/`. El `render.yaml` de la raíz del repo
-define este servicio como Static Site con `rootDir: frontend`
-(`npm ci && npm run build`, publish path `./dist`) y dos reglas de reescritura,
-**en este orden**: `/api/*` hacia el backend y `/*` hacia `index.html` para el
-enrutado de React Router. Gracias a la primera, el navegador ve un único
-origen y no hace falta CORS ni hornear la URL del backend en el build.
+Generates the static site into `dist/`. The `render.yaml` at the repo root
+defines this service as a Static Site with `rootDir: frontend`
+(`npm ci && npm run build`, publish path `./dist`) and two rewrite rules,
+**in this order**: `/api/*` towards the backend, and `/*` towards
+`index.html` for React Router's routing. Thanks to the first rule, the
+browser only ever sees a single origin, so there's no need for CORS or for
+baking the backend URL into the build.
