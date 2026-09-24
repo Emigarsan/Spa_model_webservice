@@ -1,0 +1,22 @@
+name: Despertar app Render
+
+on:
+  schedule:
+    - cron: '50 3 * * *'   # 03:50 UTC = 05:50 en España (horario de verano)
+  workflow_dispatch:
+
+jobs:
+  wake:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Ping hasta que responda
+        run: |
+          for i in $(seq 1 10); do
+            if curl -sf --max-time 90 https://TU-APP.onrender.com/health; then
+              echo "App despierta"
+              exit 0
+            fi
+            echo "Intento $i fallido, reintentando..."
+            sleep 20
+          done
+          exit 1
