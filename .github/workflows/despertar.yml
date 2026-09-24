@@ -12,7 +12,7 @@ jobs:
       - name: Ping hasta que responda
         run: |
           for i in $(seq 1 10); do
-            if curl -sf --max-time 90 https://TU-APP.onrender.com/health; then
+            if curl -sf --max-time 90 https://spa-occupancy-backend-y2wk.onrender.com/health; then
               echo "App despierta"
               exit 0
             fi
